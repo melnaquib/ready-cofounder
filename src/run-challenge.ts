@@ -193,12 +193,35 @@ export async function runPi(
   }
 }
 
+interface PiSettings {
+  packages?: Array<string | { source: string }>;
+}
+
+/**
+ * `--no-extensions` below disables extension discovery, which is also how
+ * .pi/settings.json's `packages` (e.g. provider packages like
+ * @bergetai/pi-provider) get loaded. Read that config directly and re-add
+ * each package as an explicit `-e` so it still loads under discovery-off.
+ */
+export async function readConfiguredPackageSources(repositoryRoot: string): Promise<string[]> {
+  const settingsPath = path.join(repositoryRoot, ".pi", "settings.json");
+  let raw: string;
+  try {
+    raw = await readFile(settingsPath, "utf8");
+  } catch {
+    return [];
+  }
+  const settings = JSON.parse(raw) as PiSettings;
+  return (settings.packages ?? []).map((entry) => (typeof entry === "string" ? entry : entry.source));
+}
+
 export function buildPiArguments(
   idea: string,
   systemPrompt: string,
   publicJourneys: string,
   appContext: string,
   artifactDirectory: string,
+  packageSources: string[] = [],
 ): string[] {
   const args = [
     "--mode",
@@ -218,6 +241,7 @@ export function buildPiArguments(
     "--skill",
     path.join(REPOSITORY_ROOT, "solution", "skills", "mvp-builder"),
   ];
+  for (const source of packageSources) args.push("--extension", source);
   if (process.env.CHALLENGE_PROVIDER) args.push("--provider", process.env.CHALLENGE_PROVIDER);
   if (process.env.CHALLENGE_MODEL) args.push("--model", process.env.CHALLENGE_MODEL);
   args.push("--thinking", process.env.CHALLENGE_THINKING ?? "off");
@@ -264,8 +288,9 @@ async function main(): Promise<void> {
   const eventFile = path.join(artifactDirectory, "events.jsonl");
   const stderrFile = path.join(artifactDirectory, "pi.stderr.log");
   const appPortHadListenerBeforePi = await portHasListener(APP_PORT);
+  const packageSources = await readConfiguredPackageSources(REPOSITORY_ROOT);
   const pi = await runPi(
-    buildPiArguments(idea, systemPrompt, publicJourneys, appContext, artifactDirectory),
+    buildPiArguments(idea, systemPrompt, publicJourneys, appContext, artifactDirectory, packageSources),
     outputDirectory,
     eventFile,
     stderrFile,
